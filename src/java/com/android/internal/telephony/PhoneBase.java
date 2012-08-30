@@ -699,7 +699,7 @@ public abstract class PhoneBase extends Handler implements Phone {
     @Override
     public String getIccSerialNumber() {
         IccRecords r = mIccRecords.get();
-        return (r != null) ? r.iccid : "";
+        return (r != null) ? r.iccid : null;
     }
 
     @Override
