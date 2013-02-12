@@ -106,6 +106,8 @@ public final class CallManager {
 
     private boolean mSpeedUpAudioForMtCall = false;
 
+    private boolean mRingVolumeReceiverIsRegistered = false;
+
     // state registrants
     protected final RegistrantList mPreciseCallStateRegistrants
     = new RegistrantList();
