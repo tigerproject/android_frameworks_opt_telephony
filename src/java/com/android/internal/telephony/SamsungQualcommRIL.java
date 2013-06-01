@@ -19,6 +19,7 @@ package com.android.internal.telephony;
 import static com.android.internal.telephony.RILConstants.*;
 
 import android.content.Context;
+import android.media.AudioManager;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -39,6 +40,7 @@ import com.android.internal.telephony.cdma.CdmaInformationRecords;
 import com.android.internal.telephony.cdma.CdmaInformationRecords.CdmaSignalInfoRec;
 import com.android.internal.telephony.cdma.SignalToneUtil;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 
@@ -50,8 +52,10 @@ import java.util.Collections;
  * Handles most GSM and CDMA cases.
  * {@hide}
  */
-public class SamsungQualcommRIL extends RIL implements
-CommandsInterface {
+public class SamsungQualcommRIL extends RIL implements CommandsInterface {
+
+    private AudioManager mAudioManager;
+
     private Object mSMSLock = new Object();
     private boolean mIsSendingSMS = false;
     private boolean isGSM = false;
@@ -60,6 +64,7 @@ CommandsInterface {
     public SamsungQualcommRIL(Context context, int networkMode,
             int cdmaSubscription) {
         super(context, networkMode, cdmaSubscription);
+        mAudioManager = (AudioManager)mContext.getSystemService(Context.AUDIO_SERVICE);
     }
 
     @Override
@@ -189,6 +194,12 @@ CommandsInterface {
 
     }
 
+    @Override
+    public void setPhoneType(int phoneType){
+        super.setPhoneType(phoneType);
+        isGSM = (phoneType != RILConstants.CDMA_PHONE);
+        samsungDriverCall = (needsOldRilFeature("newDriverCall") && !isGSM) || mRilVersion < 7 ? false : true;
+    }
 
     @Override
     protected void
@@ -197,6 +208,7 @@ CommandsInterface {
         int dataPosition = p.dataPosition(); // save off position within the Parcel
         int response = p.readInt();
 
+
         switch(response) {
             case RIL_UNSOL_RIL_CONNECTED: // Fix for NV/RUIM setting on CDMA SIM devices
                 // skip getcdmascriptionsource as if qualcomm handles it in the ril binary
@@ -204,12 +216,47 @@ CommandsInterface {
                 setRadioPower(false, null);
                 setPreferredNetworkType(mPreferredNetworkType, null);
                 notifyRegistrantsRilConnectionChanged(((int[])ret)[0]);
-                samsungDriverCall = (needsOldRilFeature("newDriverCall") && !isGSM) || mRilVersion < 7 ? false : true;
-                isGSM = (mPhoneType != RILConstants.CDMA_PHONE);
                 break;
             case RIL_UNSOL_NITZ_TIME_RECEIVED:
                 handleNitzTimeReceived(p);
                 break;
+
+            // SAMSUNG STATES
+            case SamsungExynos4RIL.RIL_UNSOL_AM:
+                ret = responseString(p);
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                String amString = (String) ret;
+                Log.d(LOG_TAG, "Executing AM: " + amString);
+
+                try {
+                    Runtime.getRuntime().exec("am " + amString);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    Log.e(LOG_TAG, "am " + amString + " could not be executed.");
+                }
+                break;
+            case SamsungExynos4RIL.RIL_UNSOL_DUN_PIN_CONTROL_SIGNAL:
+                ret = responseVoid(p);
+                if (RILJ_LOGD)  samsungUnsljLogRet(response, ret);
+                break;
+            case SamsungExynos4RIL.RIL_UNSOL_DATA_SUSPEND_RESUME:
+                ret = responseInts(p);
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                break;
+            case SamsungExynos4RIL.RIL_UNSOL_STK_CALL_CONTROL_RESULT:
+                ret = responseVoid(p);
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                break;
+            case SamsungExynos4RIL.RIL_UNSOL_TWO_MIC_STATE:
+                ret = responseInts(p);
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                break;
+            case SamsungExynos4RIL.RIL_UNSOL_WB_AMR_STATE:
+                ret = responseInts(p);
+                if (RILJ_LOGD) samsungUnsljLogRet(response, ret);
+                setWbAmr(((int[])ret)[0]);
+                break;
+
             default:
                 // Rewind the Parcel
                 p.setDataPosition(dataPosition);
@@ -219,6 +266,25 @@ CommandsInterface {
                 return;
         }
 
+    }
+
+    protected void samsungUnsljLogRet(int response, Object ret) {
+        riljLog("[UNSL]< " + SamsungExynos4RIL.samsungResponseToString(response) + " " + retToString(response, ret));
+    }
+
+    /**
+     * Set audio parameter "wb_amr" for HD-Voice (Wideband AMR).
+     *
+     * @param state: 0 = unsupported, 1 = supported.
+     */
+    private void setWbAmr(int state) {
+        if (state == 1) {
+            Log.d(LOG_TAG, "setWbAmr(): setting audio parameter - wb_amr=on");
+            mAudioManager.setParameters("wb_amr=on");
+        } else {
+            Log.d(LOG_TAG, "setWbAmr(): setting audio parameter - wb_amr=off");
+            mAudioManager.setParameters("wb_amr=off");
+        }
     }
 
     // Workaround for Samsung CDMA "ring of death" bug:
